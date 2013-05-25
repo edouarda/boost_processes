@@ -52,15 +52,16 @@ BOOST_AUTO_TEST_CASE(slaver)
 	ec = s.spawn("ping", info);
 	BOOST_REQUIRE_MESSAGE(!ec, "error: " << ec.message());
 
+
+    s.wait();
+
 	std::string str;
 
-	while(!ec)
+	while(s.getline(str))
 	{
-		ec = s.getline(str);
 		std::cout << str.c_str() << std::endl;
 	}
 
-    s.wait();
     BOOST_CHECK(!s.any_running());
 
 }

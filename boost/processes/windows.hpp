@@ -35,31 +35,6 @@ namespace processes
 			return boost::system::error_code();
 		}
 
-        static boost::system::error_code async_read(const input_output & io)
-        {
-
-
-
-        }
-
-		static boost::system::error_code read_char(const input_output & io, char & c)
-		{
-			DWORD read = 0;	
-
-			if (!::PeekNamedPipe(io.output, 0, 0, 0, &read, 0) || !read)
-			{
-				return make_error_code(boost::system::errc::no_message_available);
-			}
-
-			BOOL res = ::ReadFile(io.output, &c, 1, &read, 0);
-			if (!res || (read != 1))
-			{
-				return boost::system::error_code(::GetLastError(), boost::system::system_category());
-			}
-
-			return boost::system::error_code();			
-		}
-
 		static boost::system::error_code run(information & p)
 		{
 			assert(p.cmdline.argc() > 0);
