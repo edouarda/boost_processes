@@ -1,6 +1,9 @@
 
 #pragma once
 
+#include <boost/lockfree/queue.hpp>
+#include <boost/thread/thread.hpp>
+
 #include <boost/processes/structures.hpp>
 #include <boost/processes/scheduler.hpp>
 
@@ -29,6 +32,43 @@ namespace detail
 		{
 			Platform::close(_master);
 		}
+
+    private:
+        void consumer(void)
+        {
+            try
+            {
+                std::string line;
+
+                char c = '\0';
+
+                boost::system::error_code ec;
+
+                while(!ec)
+                {
+                    ec = Platform::read_char(_master, c);
+                    if (ec != 0)
+                    {
+                        break;
+                    }
+
+                    if (c == '\n')
+                    {
+                        break;
+                    }
+
+                    if (c != '\r')
+                    {
+                        line += c;
+                    }
+                }
+
+                return ec;	
+            }
+
+            catch(boost::thread_interrupted &) {}
+            
+        }
 	
 	public:		
 		boost::system::error_code spawn(command_line cmdline, boost::processes::information & info)
@@ -37,34 +77,9 @@ namespace detail
 		}
 
 	public:
-		boost::system::error_code getline(std::string & line)
+		bool getline(std::string & line)
 		{	
-			line.clear();
-
-			char c = '\0';
-
-			boost::system::error_code ec;
-
-			while(!ec)
-			{
-				ec = Platform::read_char(_master, c);
-				if (ec != 0)
-				{
-					break;
-				}
-
-				if (c == '\n')
-				{
-					break;
-				}
-
-				if (c != '\r')
-				{
-					line += c;
-				}
-			}
-
-			return ec;			
+            return _available_lines.pop(line);		
 		}
 
 	public:
@@ -80,6 +95,9 @@ namespace detail
 
 	private:
 		input_output _master;
+
+        boost::thread _consumer_thread;
+        boost::lockfree::queue<std::string> _available_lines;
 
 		detail::scheduler<Platform> _scheduler;
 	};

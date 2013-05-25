@@ -35,6 +35,13 @@ namespace processes
 			return boost::system::error_code();
 		}
 
+        static boost::system::error_code async_read(const input_output & io)
+        {
+
+
+
+        }
+
 		static boost::system::error_code read_char(const input_output & io, char & c)
 		{
 			DWORD read = 0;	
