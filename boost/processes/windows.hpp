@@ -11,7 +11,69 @@ namespace processes
     struct windows_platform 
 	{
 
-		static boost::system::error_code make_pipe(input_output & io)
+		static boost::system::error_code make_null(input_output & io)
+		{
+
+			SECURITY_ATTRIBUTES sa_attr;
+
+			sa_attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+			sa_attr.bInheritHandle = TRUE;
+			sa_attr.lpSecurityDescriptor = 0;
+
+			HANDLE h = ::CreateFile("NUL", GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, &sa_attr);
+			if (h == INVALID_HANDLE_VALUE)
+			{
+				return boost::system::error_code(::GetLastError(), boost::system::system_category()); 
+			}
+
+			io.output = h;
+
+			if (!::DuplicateHandle(GetCurrentProcess(),
+				h,
+				GetCurrentProcess(),
+				&io.input,
+				0,
+				TRUE,
+				DUPLICATE_SAME_ACCESS))
+			{
+				::CloseHandle(io.output);
+				io.output = 0;
+				return boost::system::error_code(::GetLastError(), boost::system::system_category()); 
+			}
+
+			return boost::system::error_code();
+		}
+
+		static boost::system::error_code make_stdio(input_output & io)
+		{
+			::DuplicateHandle(GetCurrentProcess(),
+				::GetStdHandle(STD_INPUT_HANDLE),
+				GetCurrentProcess(),
+				&io.output,
+				0,
+				TRUE,
+				DUPLICATE_SAME_ACCESS);
+
+			::DuplicateHandle(GetCurrentProcess(),
+				::GetStdHandle(STD_OUTPUT_HANDLE),
+				GetCurrentProcess(),
+				&io.input,
+				0,
+				TRUE,
+				DUPLICATE_SAME_ACCESS);
+
+			::DuplicateHandle(GetCurrentProcess(),
+				::GetStdHandle(STD_ERROR_HANDLE),
+				GetCurrentProcess(),
+				&io.error,
+				0,
+				TRUE,
+				DUPLICATE_SAME_ACCESS);
+
+			return boost::system::error_code();
+		}
+
+		static boost::system::error_code make_pipe(input_output & io, bool inherit_output)
 		{
 			SECURITY_ATTRIBUTES sa_attr;
 
@@ -24,15 +86,44 @@ namespace processes
 				return boost::system::error_code(::GetLastError(), boost::system::system_category());
 			}
 
-			// we don't want to inherit this handle
-			if (!::SetHandleInformation(io.output, HANDLE_FLAG_INHERIT, 0))
+			if (!inherit_output)
 			{
-				::CloseHandle(io.input);
-				::CloseHandle(io.output);
-				return boost::system::error_code(::GetLastError(), boost::system::system_category());
+				// we don't want to inherit this handle
+				if (!::SetHandleInformation(io.output, HANDLE_FLAG_INHERIT, 0))
+				{
+					::CloseHandle(io.input);
+					::CloseHandle(io.output);
+					return boost::system::error_code(::GetLastError(), boost::system::system_category());
+				}
 			}
 
 			return boost::system::error_code();
+		}
+
+		static boost::system::error_code peek_pipe(const input_output & io, size_t & avail)
+		{
+			DWORD r = 0;
+			if (!::PeekNamedPipe(io.output, 0, 0, 0, &r, 0))
+			{
+				return boost::system::error_code(::GetLastError(), boost::system::system_category());
+			}
+			avail = static_cast<size_t>(r);
+			return boost::system::error_code();
+		}
+
+		static boost::system::error_code sync_read_pipe(const input_output & io, void * p, size_t l, size_t & read)
+		{
+			boost::system::error_code ec;
+			DWORD transfered = 0;
+			if (!::ReadFile(io.output, p, static_cast<DWORD>(l), &transfered, 0))
+			{
+				ec = boost::system::error_code(::GetLastError(), boost::system::system_category());
+			}
+			else
+			{
+				read = static_cast<size_t>(transfered);
+			}
+			return ec;
 		}
 
 		static boost::system::error_code run(information & p)

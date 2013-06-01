@@ -1,16 +1,17 @@
 
 #pragma once
 
+#include <queue>
+#include <sstream>
+
+#include <boost/static_assert.hpp>
+
 #include <boost/scoped_ptr.hpp>
 #include <boost/bind.hpp>
 
-#include <boost/lockfree/queue.hpp>
 #include <boost/thread/thread.hpp>
 
 #include <boost/algorithm/string/split.hpp>
-
-#include <boost/processes/structures.hpp>
-#include <boost/processes/scheduler.hpp>
 
 namespace boost
 {
@@ -19,184 +20,211 @@ namespace processes
 namespace detail
 {
 
+	template <typename Platform>
+	class device : public boost::noncopyable
+	{
+
+	protected:
+		template <typename Initializer>
+		device(Initializer init)
+		{
+			boost::system::error_code ec = init(_device);
+			if (ec != 0)
+				throw ec;
+		}
+
+	public:
+		~device(void)
+		{
+			close();
+		}
+
+	public:
+		void close(void)
+		{
+			Platform::close(_device);
+		}
+
+	public:
+		const input_output & io(void) const
+		{
+			return _device;
+		}
+
+	protected:
+		input_output _device;
+	};
+
+	template <typename Platform>
+	class null : public device<Platform>
+	{
+	public:
+		null(void) : device<Platform>(&Platform::make_null) {}
+	};
+
+	template <typename Platform>
+	class pipe : public device<Platform>
+	{
+	public:
+		explicit pipe(bool inherit_output = true) : device<Platform>(boost::bind(&Platform::make_pipe, _1, inherit_output)) {}
+
+	public:
+		boost::system::error_code peek(size_t & avail) const
+		{
+			return Platform::peek_pipe(_device, avail);
+		}
+
+		boost::system::error_code read(void * p, size_t l, size_t & read)
+		{
+			return Platform::sync_read_pipe(_device, p, l, read);
+		}
+	};
+
+	template <typename Platform>
+	class stdio : public device<Platform>
+	{
+	public:
+		stdio(void) : device<Platform>(&Platform::make_stdio) {}
+	};
+
     template <typename Platform>
-	class slaver : public boost::noncopyable
+	class hub : public pipe<Platform>
 	{
 
     public:
-        typedef slaver<Platform> this_type;
+        typedef hub<Platform> this_type;
 
 	public:
-		slaver(void) : _read_event(0)
-		{
-			boost::system::error_code ec = Platform::make_pipe(_master);
-			if (ec != 0)
-			{
-				throw ec;
-			}
-
-            _read_event = ::CreateEvent(0, TRUE, TRUE, 0);
-            if (!_read_event)
-                throw boost::system::error_code(::GetLastError(), boost::system::system_category());
-
-            _consumer_thread.reset(new boost::thread(boost::bind(&this_type::consumer, this)));
+		hub(void) : pipe<Platform>(false), _remaining(0)
+		{		
+			_consumer_thread.reset(new boost::thread(boost::bind(&this_type::consumer_thread, this)));
 		}
 
-		~slaver(void)
+		~hub(void)
 		{
             stop_consumer();
-
-			Platform::close(_master);
-            _master = input_output();
-            ::CloseHandle(_read_event);
 		}
 
     private:
         void stop_consumer(void)
         {
+			pipe<Platform>::close();
+            
             if (_consumer_thread)
             {
-                OVERLAPPED copy = _ov;
-                ::CancelIoEx(_master.output, &copy);
-                _consumer_thread->interrupt();
                 _consumer_thread->join();
                 _consumer_thread.reset();
             }
         }
 
-    private:
-        void consumer(void)
-        {
-            try
-            {
-                assert(_read_event);
-                assert(_master.output);
-
-                ::ZeroMemory(&_ov, sizeof(_ov));
-
-                _ov.hEvent = _read_event;
-
-                std::string remainder;
-
-                while(true)
-                {
-                    boost::this_thread::interruption_point();
-
-                    static const size_t buf_size = 2048;
-                    char buf[buf_size];
-
-                    DWORD read = 0;
-                    if (!::ReadFile(_master.output, buf, buf_size, &read, &_ov))
-                        throw boost::system::error_code(::GetLastError(), boost::system::system_category());
-
-                    DWORD transferred = 0;
-                    if (!::GetOverlappedResult(_master.output, &_ov, &transferred, TRUE))
-                        throw boost::system::error_code(::GetLastError(), boost::system::system_category());
-
-                    if (!transferred)
-                        continue;
-
-                    // remove carriage return (Windows)                    
-                    char sanitized[buf_size];
-                    const char * beg_sanitized = sanitized;
-
-                    static_assert(sizeof(sanitized) == sizeof(buf), "incompatible buffer sizes");
-
-                    const char * end_sanitized = std::copy_if(buf, buf + transferred, sanitized, [](char c) -> bool
-                    {
-                        return c != '\r';
-                    });
-
-                    // now split according to newlines
-                    std::deque<std::string> lines;
-
-                    boost::algorithm::split(lines, boost::iterator_range<const char *>(beg_sanitized, end_sanitized), boost::is_any_of("\n"));
-
-                    if (lines.empty())
-                        continue;
-
-                    std::string temp_remainder;
-
-                    // was the last char a new line? if not the last line should be the remainder because it's not a full line yet
-                    if (end_sanitized > sanitized)
-                    {
-                        if (*end_sanitized != '\n')
-                        {
-                            temp_remainder = lines.back();
-                            lines.pop_back();
-                        }
-                    }
-
-                    if (lines.empty())
-                        continue;
-
-                    // add remainder to the first entry
-                    lines.front() = remainder + lines.front();
-                    remainder = temp_remainder;
-                    
-                    // and push all lines, including the empty lines
-                    for(std::deque<std::string>::const_iterator it = lines.begin(); it != lines.end(); ++it)
-                    {
-                        // in case the push fails, we block until it works
-                        const std::string * copy(new std::string(*it));
-
-                        while(!_available_lines.push(copy))
-                        {
-                            boost::this_thread::yield();
-                        }
-                    }
-
-                }
-
-            }
-
-            catch(boost::thread_interrupted &) {}
-            
-        }
-	
-	public:		
-		boost::system::error_code spawn(command_line cmdline, boost::processes::information & info)
+	private:
+		void update_remaining(void)
 		{
-			return _scheduler.spawn(cmdline, output_to(_master), info); 
+			// no need to hold the lock during the system call
+			size_t r = 0;
+			boost::system::error_code ec = pipe<Platform>::peek(r);
+
+			boost::unique_lock<boost::mutex> lock(_lines_mutex);
+			_last_error = ec;
+			_remaining = r;
 		}
-
-	public:
-		bool getline(std::string & line)
-		{	
-            const std::string * in;
-            bool res = _available_lines.pop(in);		
-            if (res)
-            {
-                line = *in;
-                delete in;
-            }
-            return res;
-		}
-
-	public:
-		bool any_running(void)
-		{
-			return _scheduler.any_running();
-		}
-
-		void wait(void)
-		{
-			_scheduler.wait();
-		}
-
-
 
 	private:
-		input_output _master;
+		void consumer_thread(void)
+		{
+			std::string remainder;
+
+			assert(!_last_error);
+
+			static const DWORD buf_size = 2048;
+			char buf[buf_size];
+
+			while(!_last_error)
+			{
+				update_remaining();
+
+				// inform all waiting thread of the current state just before the read
+				_lines_cond.notify_all();
+
+				size_t transfered = 0;
+
+				boost::system::error_code ec = pipe<Platform>::read(buf, buf_size, transfered);
+
+				boost::unique_lock<boost::mutex> lock(_lines_mutex);
+
+				_last_error = ec;
+
+				if ((_last_error != 0) || !transfered)
+					continue;
+
+				// stringstream is certainly not the fastest way, but it's the most
+				// portable way
+				std::stringstream ss;
+				ss.write(buf, transfered);
+
+				if (ss.bad())
+				{
+					// got an error :'(
+					// not much we can do, propably an out of memory condition let's try again and drop
+					// that data
+					continue;
+				}
+
+				while (!ss.eof())
+				{
+					std::string new_line;
+					std::getline(ss, new_line);
+					_lines.push(new_line);
+				}
+			}
+
+			// loop exited, signal all as well (error is non zero)
+			_lines_cond.notify_all();
+
+		}
+   
+	public:
+		bool unsafe_getline(std::string & s)
+		{
+			bool avail = !_lines.empty();
+			if (avail)
+			{
+				s = _lines.front();
+				_lines.pop();
+			}
+			return avail;
+		}
+
+	public:		
+		bool getline(std::string & s)
+		{
+			boost::unique_lock<boost::mutex> lock(_lines_mutex);
+			return !_last_error && unsafe_getline(s);
+		}
+
+	public:
+		void flush(void)
+		{
+			boost::unique_lock<boost::mutex> lock(_lines_mutex);
+			while (!_last_error && (_remaining > 0))
+			{
+				_lines_cond.wait(lock);
+			}
+		}
+
+	private:
+		mutable boost::mutex _lines_mutex;
+		mutable boost::condition_variable _lines_cond;
+		std::queue<std::string> _lines;
+
+		boost::system::error_code _last_error;		
+		volatile size_t _remaining;
 
         boost::scoped_ptr<boost::thread> _consumer_thread;
-        boost::lockfree::queue<const std::string *> _available_lines;
-        HANDLE _read_event;
-        OVERLAPPED _ov;
-
-		detail::scheduler<Platform> _scheduler;
+		
 	};
 
 }
+
 }
 }

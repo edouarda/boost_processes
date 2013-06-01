@@ -9,6 +9,7 @@ target_link_libraries (boost_processes_test
 
 
     ${Boost_FILESYSTEM_LIBRARY}
+    ${Boost_REGEX_LIBRARY}
     ${Boost_SYSTEM_LIBRARY}
     ${Boost_DATE_TIME_LIBRARY}
     ${Boost_THREAD_LIBRARY}
