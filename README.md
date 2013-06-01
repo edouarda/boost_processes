@@ -49,7 +49,7 @@ int main(int argc, char ** argv)
     boost::system::error_code ec = s.spawn(boost::processes::command_line("netstat") << "-n", boost::processes::output_to(h.io()), info);
     // error checking
 
-    ec = s.spawn("ping", info);
+    ec = s.spawn("ping", boost::processes::output_to(h.io()), info);
     // error checking
 
     s.wait();

@@ -42,6 +42,7 @@ BOOST_AUTO_TEST_CASE(create_terminate)
 
 BOOST_AUTO_TEST_CASE(pipe)
 {
+    // this crap doesn't work :(
 
 	boost::processes::scheduler s;
 	boost::processes::pipe p(true);
@@ -81,7 +82,7 @@ BOOST_AUTO_TEST_CASE(hub)
 	boost::system::error_code ec = s.spawn(boost::processes::command_line("netstat") << "-n", boost::processes::output_to(h.io()), info);
 	BOOST_REQUIRE_MESSAGE(!ec, "error: " << ec.message());
 
-	ec = s.spawn("ping", info);
+	ec = s.spawn("ping", boost::processes::output_to(h.io()), info);
 	BOOST_REQUIRE_MESSAGE(!ec, "error: " << ec.message());
 
     s.wait();
