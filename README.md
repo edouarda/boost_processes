@@ -6,7 +6,7 @@ Launch processes! Kill them! Launch them again! Get the output!
 What currently works
 --------------------
 
-    * Basic process management (launch, kill)
+ * Basic process management (launch, kill)
 
 Usage
 -----

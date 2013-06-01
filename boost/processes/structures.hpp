@@ -10,9 +10,6 @@
 #include <boost/operators.hpp>
 
 #ifdef BOOST_WINDOWS 
-
-#include <windows.h>
-
 namespace boost
 {
 namespace processes
@@ -54,6 +51,11 @@ namespace processes
 	inline input_output output_to(const boost::processes::input_output & io)
 	{
 		return input_output(0, io.input, io.input);
+	}
+
+	inline input_output from_to(const boost::processes::input_output & from, const boost::processes::input_output & to)
+	{
+		return input_output(from.output, to.input, to.input);
 	}
 
 	inline bool operator < (const identifier & left, const identifier & right)

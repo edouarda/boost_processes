@@ -56,6 +56,7 @@ IF (MSVC)
         MESSAGE(STATUS "Looking for 32-bit boost libraries")
         FILE(TO_CMAKE_PATH $ENV{BOOST_ROOT}/stage/lib BOOST_LIBRARYDIR)
     ENDIF(CUR_ARCH STREQUAL "64bit")
+
 ENDIF(MSVC)
 
 IF (CLANG)

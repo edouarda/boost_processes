@@ -145,6 +145,8 @@ namespace detail
 		{
 			processes_set to_gc;
 
+            bool result = false;
+
 			{
 				boost::unique_lock<boost::mutex> lock(_mutex);				
 
@@ -153,9 +155,12 @@ namespace detail
 				{
 					if (_platform.running(it->id))
 					{
-						return true;
+						result = true;
 					}
-					to_gc.insert(*it);
+                    else
+                    {
+					    to_gc.insert(*it);
+                    }
 				}
 			}
 
@@ -165,10 +170,13 @@ namespace detail
 				gc_process(it->id);
 			}
 
-			return false;
+			return result;
 		}
 
 	public:
+        // I like spin locks. Don't you?
+        // the thing is that it's possible on some systems to get a signal when a child exits, while on some others it's not possible
+        // for now we spin everywhere and will specialize later
 		void wait(void)
 		{
 			while (any_running())
@@ -176,6 +184,14 @@ namespace detail
 				boost::this_thread::yield();
 			}
 		}
+
+        void wait(const identifier & id)
+        {
+            while(running(id))
+            {
+                boost::this_thread::yield();
+            }
+        }
 
 	public:
 		Platform _platform;
